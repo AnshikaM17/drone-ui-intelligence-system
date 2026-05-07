@@ -1,12 +1,12 @@
 import math
 
 # 📡 Simulated telemetry
-ALTITUDE = 20  # meters
+ALTITUDE = 25  # meters (adjusted for better accuracy from drone height)
 
 KNOWN_PERSON_HEIGHT = 1.7  # meters
 
 CALIBRATED = False
-REAL_REF_WIDTH = 0.30
+REAL_REF_WIDTH = 1.8  # meters - Updated for vehicle calibration (standard car width)
 PIXEL_REF_WIDTH = None
 
 FOCAL_LENGTH = 350
