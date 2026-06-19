@@ -20,7 +20,7 @@ def mouse_click(event, x, y, flags, param):
 detector = ObjectDetector()
 estimator = Estimator()
 
-cap = cv2.VideoCapture("data/Rec_0009.mp4")
+cap = cv2.VideoCapture("../data/Rec_0009.mp4")
 
 prev_positions = {}
 
@@ -31,8 +31,18 @@ print("🖱️ Click 2 points to measure distance")
 print("❌ Press ESC to exit")
 
 # 🖱️ Enable mouse
-cv2.namedWindow("Drone UI Prototype")
+cv2.namedWindow("Drone UI Prototype", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("Drone UI Prototype", 1280, 720)
 cv2.setMouseCallback("Drone UI Prototype", mouse_click)
+
+# Try to move window to front (Windows-specific)
+try:
+    import win32gui
+    hwnd = win32gui.FindWindow(None, "Drone UI Prototype")
+    if hwnd:
+        win32gui.SetForegroundWindow(hwnd)
+except:
+    pass
 
 while True:
     ret, frame = cap.read()
@@ -42,20 +52,26 @@ while True:
 
     results = detector.detect(frame)
 
-    key = cv2.waitKey(30)
+    detected_count = 0
+    filtered_count = 0
 
     for box in results.boxes:
-        x1, y1, x2, y2 = box.xyxy[0]
+        x1, y1, x2, y2 = map(float, box.xyxy[0])
+        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
 
         confidence = float(box.conf[0])
         label = results.names[int(box.cls[0])]
 
-        # 🔴 Filter weak detections
-        if confidence < 0.5:
+        detected_count += 1
+
+        # 🔴 Filter weak detections (lowered threshold for better detection)
+        if confidence < 0.3:
+            filtered_count += 1
             continue
 
         # 🔴 Filter irrelevant classes
         if label not in ALLOWED_CLASSES:
+            filtered_count += 1
             continue
 
         pixel_width = x2 - x1
@@ -115,10 +131,21 @@ while True:
     cv2.line(frame, (w//2 - 20, h//2), (w//2 + 20, h//2), (255,255,255), 1)
     cv2.line(frame, (w//2, h//2 - 20), (w//2, h//2 + 20), (255,255,255), 1)
 
+    # Debug info
+    if detected_count > 0:
+        print(f"Frame: Detected={detected_count}, Filtered={filtered_count}, Drawn={detected_count-filtered_count}")
+
     cv2.imshow("Drone UI Prototype", frame)
 
-    if key == 27:
+    # Wait 100ms (slower playback) and check for ESC key
+    try:
+        if cv2.waitKey(100) == 27:
+            break
+    except KeyboardInterrupt:
+        print("\n⏹️  Interrupted by user")
         break
 
 cap.release()
+print("\n⏸️  Window will close in 5 seconds...")
+cv2.waitKey(5000)  # Keep window open for 5 seconds
 cv2.destroyAllWindows()
