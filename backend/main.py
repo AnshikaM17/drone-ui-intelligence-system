@@ -11,10 +11,11 @@ import cv2
 import sys
 import os
 import argparse
+import time
 from detector import ObjectDetector
 from estimator import Estimator
-from utils import draw_overlay
-from config import GLOBAL_MIN_CONFIDENCE, MIN_CONFIDENCE_PER_CLASS
+from utils import draw_overlay, draw_scale_bar, draw_status_strip
+from config import GLOBAL_MIN_CONFIDENCE, MIN_CONFIDENCE_PER_CLASS, FOCAL_LENGTH_PX, ALTITUDE
 
 # ── Argument parsing ──────────────────────────────────────────────
 parser = argparse.ArgumentParser(description="Drone UI Intelligence System")
@@ -29,6 +30,12 @@ parser.add_argument(
     type=str,
     default=None,
     help="Optional: path to save the processed output video (e.g. output.mp4)"
+)
+parser.add_argument(
+    "--duration",
+    type=int,
+    default=0,
+    help="Optional: auto-exit after this many seconds (useful for demo clips). 0 = run until ESC."
 )
 args = parser.parse_args()
 
@@ -57,10 +64,14 @@ if args.output:
     writer = cv2.VideoWriter(args.output, fourcc, fps, (width, height))
     print(f"💾 Saving output to: {args.output}")
 
-# ── Stats ─────────────────────────────────────────────────────────
+# ── Stats & FPS tracker ───────────────────────────────────────────
 total_frames   = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 fps_src        = cap.get(cv2.CAP_PROP_FPS) or 25
 duration_sec   = total_frames / fps_src if total_frames > 0 else 0
+_fps_t0        = time.time()
+_fps_count     = 0
+_live_fps      = 0.0
+start_time     = time.time()
 
 print("🚀 Drone UI Intelligence System started")
 print(f"   Source  : {source}")
@@ -135,6 +146,8 @@ while True:
     results = detector.detect(frame)
 
     calibration_triggered = False
+    # Collect drawn boxes for semantic ruler context
+    drawn_boxes = []
 
     for box in results.boxes:
         x1, y1, x2, y2 = box.xyxy[0]
@@ -181,6 +194,7 @@ while True:
 
         label_text = f"{label.upper()} ({confidence * 100:.0f}%) [{status}]"
         draw_overlay(frame, (x1, y1, x2, y2), label_text, size, distance)
+        drawn_boxes.append((label, size, x1, y1, x2, y2))
 
     # ── Mouse Measuring Tool overlay ──────────────────────────────
     if measure_start and measure_end:
@@ -189,6 +203,25 @@ while True:
         pixel_dist = ((px2 - px1) ** 2 + (py2 - py1) ** 2) ** 0.5
         from config import FOCAL_LENGTH_PX, ALTITUDE
         real_m = (pixel_dist / FOCAL_LENGTH_PX) * ALTITUDE
+
+        # ── Semantic context: express distance in real-world object units ──
+        semantic = ""
+        if drawn_boxes:
+            # Use the first drawn object as semantic reference
+            ref_label, ref_size, *_ = drawn_boxes[0]
+            if ref_size > 0.1:
+                ratio = real_m / ref_size
+                semantic = f"  ≈{ratio:.1f} {ref_label} widths"
+        elif real_m > 0:
+            # Fallback: compare to common references
+            if real_m < 2:
+                semantic = f"  ≈ door width"
+            elif real_m < 5:
+                semantic = f"  ≈ car length"
+            elif real_m < 12:
+                semantic = f"  ≈ bus length"
+            else:
+                semantic = f"  ≈ {real_m/3.0:.0f} storeys"
 
         RULER_COLOR  = (0, 230, 230)
         SHADOW_COLOR = (0, 0, 0)
@@ -217,7 +250,7 @@ while True:
 
         mid_x = (px1 + px2) // 2
         mid_y = (py1 + py2) // 2
-        label_m = f"  {real_m:.1f} m  |  {int(pixel_dist)} px  "
+        label_m = f"  {real_m:.1f} m  |  {int(pixel_dist)} px{semantic}  "
         font_face  = cv2.FONT_HERSHEY_DUPLEX
         font_scale = 0.65
         font_thick = 1
@@ -249,6 +282,22 @@ while True:
     cv2.line(frame, (cx, cy - 25), (cx, cy - 6),  (255, 255, 255), 1, cv2.LINE_AA)
     cv2.line(frame, (cx, cy + 6),  (cx, cy + 25), (255, 255, 255), 1, cv2.LINE_AA)
     cv2.circle(frame, (cx, cy), 3, (255, 255, 255), 1, cv2.LINE_AA)
+
+    # ── Scale bar + Status strip ──────────────────────────────────
+    draw_scale_bar(frame, FOCAL_LENGTH_PX, ALTITUDE)
+    draw_status_strip(frame, ALTITUDE, FOCAL_LENGTH_PX, _live_fps, paused)
+
+    # ── FPS counter ───────────────────────────────────────────────
+    _fps_count += 1
+    if _fps_count >= 15:
+        _live_fps  = _fps_count / (time.time() - _fps_t0)
+        _fps_t0    = time.time()
+        _fps_count = 0
+
+    # ── Auto-exit after --duration seconds ────────────────────────
+    if args.duration > 0 and (time.time() - start_time) >= args.duration:
+        print(f"\n⏹ Auto-exit after {args.duration}s demo clip.")
+        break
 
     # ── Progress bar strip (bottom of frame) ───────────────────────
     if total_frames > 0:
