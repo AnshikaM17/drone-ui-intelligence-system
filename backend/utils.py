@@ -1,4 +1,4 @@
-import cv2
+﻿import cv2
 
 
 def get_color(distance):
